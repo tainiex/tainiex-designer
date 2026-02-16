@@ -122,27 +122,61 @@ export class RelationshipWizard {
             border-bottom: 1px solid #e0e0e0;
         `;
 
+        const stepLabels = ['Tables', 'Columns', 'Type', 'Options'];
+        
         header.innerHTML = `
-            <h2 style="margin: 0 0 8px 0; font-size: 20px; font-weight: 600;">Create Relationship</h2>
-            <div class="wizard-steps" style="display: flex; gap: 8px; margin-top: 16px;">
+            <h2 style="margin: 0 0 20px 0; font-size: 20px; font-weight: 600;">Create Relationship</h2>
+            <div class="wizard-steps" style="display: flex; align-items: center; justify-content: space-between; position: relative;">
                 ${Array.from({ length: this.totalSteps }, (_, i) => {
                     const stepNum = i + 1;
                     const isActive = stepNum === this.currentStep;
                     const isCompleted = stepNum < this.currentStep;
+                    const isLast = stepNum === this.totalSteps;
+                    
                     return `
-                        <div class="step-indicator" style="
-                            flex: 1;
-                            height: 4px;
-                            background: ${isCompleted ? '#4CAF50' : isActive ? '#2196F3' : '#e0e0e0'};
-                            border-radius: 2px;
-                            transition: background 0.3s;
-                        "></div>
+                        <div style="display: flex; flex-direction: column; align-items: center; flex: 1; position: relative; z-index: 1;">
+                            <div style="
+                                width: 40px;
+                                height: 40px;
+                                border-radius: 50%;
+                                background: ${isCompleted ? '#4CAF50' : isActive ? '#2196F3' : '#e0e0e0'};
+                                color: white;
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                                font-weight: 600;
+                                font-size: 16px;
+                                transition: all 0.3s;
+                                box-shadow: ${isActive ? '0 2px 8px rgba(33, 150, 243, 0.4)' : 'none'};
+                                position: relative;
+                            ">
+                                ${isCompleted ? '✓' : stepNum}
+                            </div>
+                            <div style="
+                                margin-top: 8px;
+                                font-size: 12px;
+                                font-weight: ${isActive ? '600' : '400'};
+                                color: ${isActive ? '#2196F3' : isCompleted ? '#4CAF50' : '#999'};
+                                text-align: center;
+                            ">
+                                ${stepLabels[i]}
+                            </div>
+                            ${!isLast ? `
+                                <div style="
+                                    position: absolute;
+                                    top: 20px;
+                                    left: 50%;
+                                    width: calc(100% + 20px);
+                                    height: 2px;
+                                    background: ${isCompleted ? '#4CAF50' : '#e0e0e0'};
+                                    z-index: -1;
+                                    transition: background 0.3s;
+                                "></div>
+                            ` : ''}
+                        </div>
                     `;
                 }).join('')}
             </div>
-            <p style="margin: 8px 0 0 0; font-size: 13px; color: #666;">
-                Step ${this.currentStep} of ${this.totalSteps}
-            </p>
         `;
 
         return header;
