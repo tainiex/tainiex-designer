@@ -2,17 +2,17 @@
 
 ## 任务概览
 
-- [ ] 1. Relationship 模型扩展
-  - [ ] 1.1 添加 name 和 comment 字段
-  - [ ] 1.2 实现 validate() 方法
-  - [ ] 1.3 更新 toJSON() 和 fromJSON()
-  - [ ] 1.4 单元测试
+- [x] 1. Relationship 模型扩展
+  - [x] 1.1 添加 name 和 comment 字段
+  - [x] 1.2 实现 validate() 方法
+  - [x] 1.3 更新 toJSON() 和 fromJSON()
+  - [x] 1.4 单元测试
 
-- [ ] 2. 验证引擎实现
-  - [ ] 2.1 创建 ValidationEngine 类
-  - [ ] 2.2 实现验证规则
-  - [ ] 2.3 实现验证结果收集
-  - [ ] 2.4 单元测试
+- [-] 2. 验证引擎实现
+  - [x] 2.1 创建 ValidationEngine 类
+  - [x] 2.2 实现验证规则
+  - [x] 2.3 实现验证结果收集
+  - [x] 2.4 单元测试
 
 - [ ] 3. RelationshipWizard 组件
   - [ ] 3.1 创建向导对话框结构
