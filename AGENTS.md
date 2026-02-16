@@ -4,14 +4,31 @@
 
 ## 项目概述
 
-Tainiex Designer 是一个跨平台的数据库建模工具，采用 **Tauri + Vanilla TypeScript + Canvas 2D** 架构实现高性能图形渲染和交互。
+Tainiex Designer 是一个跨平台的数据库建模工具，采用 **Tauri 2.10 + Vanilla TypeScript + Canvas 2D** 架构实现高性能图形渲染和交互。
 
 ### 核心设计理念
 
 1. **性能优先** - 使用 Canvas 2D 原生 API，避免框架开销
 2. **分层架构** - 渲染、模型、交互、持久化分层解耦
 3. **局部重绘** - 通过脏区域管理优化渲染性能
-4. **命令模式** - 所有操作通过命令模式实现撤销/重做
+4. **类型安全** - TypeScript 严格模式，完整的类型定义
+5. **事件驱动** - 基于自定义事件的组件通信
+
+### 技术栈
+
+**前端**
+- TypeScript 5.6 (strict mode)
+- Vite 6.0 (构建工具)
+- Canvas 2D API (渲染)
+- 无框架依赖
+
+**后端**
+- Tauri 2.10 (桌面框架)
+- Rust (系统编程)
+
+**开发工具**
+- ESLint (代码检查)
+- Chrome DevTools (调试)
 
 ## 架构设计
 
@@ -84,9 +101,30 @@ class Renderer {
 
 **关键方法**:
 - `start()` - 启动 RAF 循环
-- `render()` - 主渲染逻辑
+- `stop()` - 停止渲染循环
+- `render()` - 主渲染逻辑（私有）
 - `scheduleRender(region?)` - 标记脏区域
 - `addLayer(layer)` - 注册图层
+- `removeLayer(layer)` - 移除图层
+- `resize()` - 调整 Canvas 尺寸（支持高 DPI）
+- `getViewport()` - 获取视口对象
+- `getCanvas()` - 获取 Canvas 元素
+
+**高 DPI 支持**:
+```typescript
+private setupHighDPI(): void {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = this.canvas.getBoundingClientRect();
+    
+    // 物理像素
+    this.canvas.width = rect.width * dpr;
+    this.canvas.height = rect.height * dpr;
+    
+    // CSS 像素
+    this.canvas.style.width = `${rect.width}px`;
+    this.canvas.style.height = `${rect.height}px`;
+}
+```
 
 ---
 
@@ -133,20 +171,25 @@ abstract class Layer {
    - zIndex: 0
    - 绘制网格背景
    - 响应缩放级别动态调整网格密度
+   - 使用浅灰色线条
 
-2. **EntityLayer** (`src/renderer/layers/EntityLayer.ts`)
-   - zIndex: 10
-   - 绘制表/实体
-   - 包含表名、字段列表、主键/外键标记
-
-3. **RelationshipLayer** (`src/renderer/layers/RelationshipLayer.ts`)
+2. **RelationshipLayer** (`src/renderer/layers/RelationshipLayer.ts`)
    - zIndex: 5
    - 绘制表之间的连线
    - 支持不同关系类型 (1:1, 1:N, N:M)
+   - 需要通过 `setSchema()` 设置数据源
+
+3. **EntityLayer** (`src/renderer/layers/EntityLayer.ts`)
+   - zIndex: 10
+   - 绘制表/实体
+   - 包含表名、字段列表、主键/外键标记
+   - 需要通过 `setSchema()` 设置数据源
+   - 支持表的拖拽移动
 
 4. **UILayer** (`src/renderer/layers/UILayer.ts`)
    - zIndex: 20
    - 绘制选择框、高亮、拖拽预览等 UI 元素
+   - 最上层，不受视口变换影响的 UI 元素
 
 ---
 
@@ -193,12 +236,32 @@ class Viewport {
   // 缩放
   zoom(deltaScale: number, centerX: number, centerY: number): void {
     const oldScale = this.scale;
-    this.scale = Math.max(0.1, Math.min(5.0, this.scale + deltaScale));
+    this.scale = Math.max(
+      this.MIN_SCALE,
+      Math.min(this.MAX_SCALE, this.scale * (1 + deltaScale))
+    );
     
     // 以指定点为中心缩放
     const scaleRatio = this.scale / oldScale;
     this.offsetX = centerX - (centerX - this.offsetX) * scaleRatio;
     this.offsetY = centerY - (centerY - this.offsetY) * scaleRatio;
+  }
+  
+  // 重置视口
+  reset(): void {
+    this.offsetX = 0;
+    this.offsetY = 0;
+    this.scale = 1.0;
+  }
+  
+  // 获取当前缩放级别
+  getScale(): number {
+    return this.scale;
+  }
+  
+  // 获取当前偏移量
+  getOffset(): Point {
+    return { x: this.offsetX, y: this.offsetY };
   }
 }
 ```
@@ -221,8 +284,10 @@ interface Rect {
 
 class DirtyRegionManager {
   private regions: Rect[] = [];
+  private dirty: boolean = false;
   
   addRegion(region?: Rect): void {
+    this.dirty = true;
     if (!region) {
       // 全屏脏区域
       this.regions = [{ x: 0, y: 0, width: Infinity, height: Infinity }];
@@ -237,17 +302,21 @@ class DirtyRegionManager {
   
   clear(): void {
     this.regions = [];
+    this.dirty = false;
+  }
+  
+  isDirty(): boolean {
+    return this.dirty;
   }
   
   // 合并重叠的矩形区域
   private mergeRegions(regions: Rect[]): Rect[] {
-    // TODO: 实现矩形合并算法（简单版本可以直接返回包围盒）
     if (regions.length === 0) return [];
     if (regions.some(r => r.width === Infinity)) {
       return [{ x: 0, y: 0, width: Infinity, height: Infinity }];
     }
     
-    // 计算包围盒
+    // 计算包围盒（简单实现）
     const minX = Math.min(...regions.map(r => r.x));
     const minY = Math.min(...regions.map(r => r.y));
     const maxX = Math.max(...regions.map(r => r.x + r.width));
@@ -350,37 +419,51 @@ class Table {
     this.columns = this.columns.filter(c => c.id !== columnId);
   }
   
+  getColumn(columnId: string): Column | undefined {
+    return this.columns.find((c) => c.id === columnId);
+  }
+  
   getPrimaryKeys(): Column[] {
-    return this.columns.filter(c => c.primaryKey);
+    return this.columns.filter((c) => c.primaryKey);
   }
-  
+
   getForeignKeys(): Column[] {
-    return this.columns.filter(c => c.foreignKey);
+    return this.columns.filter((c) => c.foreignKey);
   }
-  
+
   toJSON(): object {
     return {
       id: this.id,
       name: this.name,
       position: this.position,
-      columns: this.columns.map(c => c.toJSON()),
+      columns: this.columns.map((c) => c.toJSON()),
       indexes: this.indexes,
       constraints: this.constraints,
-      comment: this.comment
+      comment: this.comment,
     };
   }
-  
+
   static fromJSON(json: any): Table {
-    const table = new Table(json.id, json.name, json.position.x, json.position.y);
+    const table = new Table(
+      json.id,
+      json.name,
+      json.position.x,
+      json.position.y
+    );
     table.comment = json.comment;
     table.indexes = json.indexes || [];
     table.constraints = json.constraints || [];
-    
+
     for (const colData of json.columns || []) {
       table.addColumn(Column.fromJSON(colData));
     }
-    
+
     return table;
+  }
+  
+  // 工厂方法：创建新表
+  static create(name: string, x: number, y: number): Table {
+    return new Table(generateId(), name, x, y);
   }
 }
 ```
@@ -514,38 +597,75 @@ class Relationship {
 **文件**: `src/interactions/InteractionManager.ts`
 
 ```typescript
-type Tool = 'select' | 'pan' | 'create-table' | 'create-relationship';
+export type ToolType = 'select' | 'pan' | 'table' | 'relationship';
 
 class InteractionManager {
-  private currentTool: Tool = 'select';
-  private tools: Map<Tool, BaseTool> = new Map();
-  private canvas: HTMLCanvasElement;
-  private viewport: Viewport;
+  private currentTool: ToolType = 'select';
+  private tools: Map<ToolType, BaseTool> = new Map();
+  private renderer: Renderer;
   
-  constructor(canvas: HTMLCanvasElement, viewport: Viewport) {
-    this.canvas = canvas;
-    this.viewport = viewport;
-    this.initTools();
+  constructor(
+    renderer: Renderer,
+    entityLayer: EntityLayer,
+    relationshipLayer: RelationshipLayer,
+    uiLayer: UILayer,
+    schema: Schema
+  ) {
+    this.renderer = renderer;
+    this.initTools(entityLayer, relationshipLayer, uiLayer, schema);
     this.bindEvents();
   }
   
-  private initTools(): void {
-    this.tools.set('select', new SelectTool(this.viewport));
-    this.tools.set('pan', new PanTool(this.viewport));
-    this.tools.set('create-table', new TableTool(this.viewport));
-    this.tools.set('create-relationship', new RelationshipTool(this.viewport));
+  private initTools(
+    entityLayer: EntityLayer,
+    relationshipLayer: RelationshipLayer,
+    uiLayer: UILayer,
+    schema: Schema
+  ): void {
+    const viewport = this.renderer.getViewport();
+    const canvas = this.renderer.getCanvas();
+    
+    this.tools.set('select', new SelectTool(viewport, canvas, entityLayer, schema));
+    this.tools.set('pan', new PanTool(viewport, canvas, this.renderer));
+    this.tools.set('relationship', new RelationshipTool(
+      viewport,
+      canvas,
+      entityLayer,
+      relationshipLayer,
+      uiLayer,
+      schema
+    ));
   }
   
-  setTool(tool: Tool): void {
+  setTool(tool: ToolType): void {
+    // 通知旧工具停用
+    const oldTool = this.tools.get(this.currentTool);
+    if (oldTool) {
+      oldTool.deactivate?.();
+    }
+    
     this.currentTool = tool;
+    
+    // 通知新工具激活
+    const newTool = this.tools.get(tool);
+    if (newTool) {
+      newTool.activate?.();
+    }
+    
+    // 发送工具切换事件
+    window.dispatchEvent(new CustomEvent('tool-changed', { 
+      detail: { type: tool } 
+    }));
   }
   
   private bindEvents(): void {
-    this.canvas.addEventListener('mousedown', this.onMouseDown.bind(this));
-    this.canvas.addEventListener('mousemove', this.onMouseMove.bind(this));
-    this.canvas.addEventListener('mouseup', this.onMouseUp.bind(this));
-    this.canvas.addEventListener('wheel', this.onWheel.bind(this));
+    const canvas = this.renderer.getCanvas();
+    
+    canvas.addEventListener('mousedown', this.onMouseDown.bind(this));
+    canvas.addEventListener('mousemove', this.onMouseMove.bind(this));
+    canvas.addEventListener('mouseup', this.onMouseUp.bind(this));
     document.addEventListener('keydown', this.onKeyDown.bind(this));
+    document.addEventListener('keyup', this.onKeyUp.bind(this));
   }
   
   private onMouseDown(e: MouseEvent): void {
@@ -569,27 +689,74 @@ class InteractionManager {
     }
   }
   
-  private onWheel(e: WheelEvent): void {
-    e.preventDefault();
-    
-    if (e.ctrlKey || e.metaKey) {
-      // 缩放
-      const deltaScale = -e.deltaY * 0.001;
-      this.viewport.zoom(deltaScale, e.clientX, e.clientY);
-    } else {
-      // 平移
-      this.viewport.pan(-e.deltaX, -e.deltaY);
+  private onKeyDown(e: KeyboardEvent): void {
+    // 空格键临时切换到平移工具
+    if (e.key === ' ' && this.currentTool !== 'pan') {
+      e.preventDefault();
+      this.setTool('pan');
     }
   }
   
-  private onKeyDown(e: KeyboardEvent): void {
-    // 快捷键处理
+  private onKeyUp(e: KeyboardEvent): void {
+    // 释放空格键恢复之前的工具
     if (e.key === ' ') {
-      this.setTool('pan');
+      e.preventDefault();
+      this.setTool('select');
     }
   }
 }
 ```
+
+#### 3.2 BaseTool
+
+**职责**: 工具基类，定义工具接口
+
+**文件**: `src/interactions/BaseTool.ts`
+
+```typescript
+export abstract class BaseTool {
+  protected viewport: Viewport;
+  protected canvas: HTMLCanvasElement;
+  
+  constructor(viewport: Viewport, canvas: HTMLCanvasElement) {
+    this.viewport = viewport;
+    this.canvas = canvas;
+  }
+  
+  // 生命周期方法
+  activate?(): void;
+  deactivate?(): void;
+  
+  // 事件处理方法
+  abstract onMouseDown(e: MouseEvent): void;
+  abstract onMouseMove(e: MouseEvent): void;
+  abstract onMouseUp(e: MouseEvent): void;
+  
+  // 工具方法：获取鼠标世界坐标
+  protected getWorldPosition(e: MouseEvent): Point {
+    const rect = this.canvas.getBoundingClientRect();
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
+    return this.viewport.screenToWorld(screenX, screenY);
+  }
+}
+```
+
+#### 3.3 具体工具实现
+
+**SelectTool** (`src/interactions/SelectTool.ts`)
+- 选择和移动表
+- 支持拖拽移动
+- 发送选择变化事件
+
+**PanTool** (`src/interactions/PanTool.ts`)
+- 平移画布
+- 拖拽改变视口偏移
+
+**RelationshipTool** (`src/interactions/RelationshipTool.ts`)
+- 创建表之间的关系
+- 拖拽从源表到目标表
+- 在 UILayer 显示预览线
 
 ---
 
